@@ -1,0 +1,10 @@
+# 用户数据：笔记、进度、设置（含 API Key）、抖音登录态、模型——绝不能提交
+data/
+# Python
+.venv/
+__pycache__/
+*.pyc
+# 系统
+.DS_Store
+Thumbs.db
+*.zip
