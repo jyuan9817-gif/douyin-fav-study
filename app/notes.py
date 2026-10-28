@@ -51,7 +51,8 @@ def render(item: dict, md_dir: Path = None) -> str:
     if meta:
         lines += [" · ".join(meta), ""]
     if item.get("title") and item.get("title") != title:
-        lines += [f"> 原标题：{item['title']}", ""]
+        orig = "\n".join(l.strip() for l in str(item["title"]).splitlines() if l.strip())
+        lines += ["> 原标题：" + orig.replace("\n", "\n> "), ""]
 
     def section(name, body):
         if body:

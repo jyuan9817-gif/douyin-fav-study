@@ -464,3 +464,6 @@ iframe.mindmap { width: 100%; height: 540px; border: 0; border-radius: var(--r-c
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 .seg button { display: inline-flex; align-items: center; gap: 4px; }
+
+/* hidden 属性优先于各组件的 display 设置（修复提示和参考要点一开始就显示的问题） */
+[hidden] { display: none !important; }
