@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/logo.svg" width="88" alt="logo"></p>
 
-<h1 align="center">收藏学习台 · Douyin Fav Study</h1>
+<h1 align="center">AI知识库 · Douyin Fav Study</h1>
 
 <p align="center">把抖音收藏的干货视频和图文，变成能学、能测、能复习的本地笔记<br>
 Turn your saved Douyin videos &amp; image posts into local study notes you can learn, quiz and review.</p>
@@ -203,8 +203,8 @@ Turn your saved Douyin videos &amp; image posts into local study notes you can l
 
 **想换一台电脑？**
 用「设置 → 备份与恢复」：
-1. 旧电脑上点「下载完整备份」，得到一个 `收藏学习台备份-日期.zip`（包含笔记、文字稿、精读、学习进度、设置）。
-2. 新电脑上装好学习台（同样运行安装脚本），打开「设置 → 恢复备份…」，选这个 zip，确认后就恢复原样。
+1. 旧电脑上点「下载完整备份」，得到一个 `AI知识库备份-日期.zip`（包含笔记、文字稿、精读、学习进度、设置）。
+2. 新电脑上装好 AI知识库（同样运行安装脚本），打开「设置 → 恢复备份…」，选这个 zip，确认后就恢复原样。
 3. 抖音登录状态不在备份里，新电脑上重新扫码；语音模型会自动重新下载。
 
 恢复会覆盖当前数据，但恢复前程序会先把当前数据自动备份到 `data/backups/`（保留最近 5 个），在同一个页面可以一键撤销。

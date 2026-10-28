@@ -1,4 +1,4 @@
-/* 收藏学习台 前端（原生 JS，不需要编译） */
+/* AI知识库 前端（原生 JS，不需要编译） */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -77,21 +77,49 @@ const fmtDur = (s) => { s = Math.round(s || 0); return s ? `${Math.floor(s / 60)
 const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("zh-CN", { hour12: false });
 
 /* ---------------------------------------------------------------- 状态轮询 */
+let wasDistillBusy = false;
+function updateJobBanner() {
+  const ban = $("#jobBanner");
+  if (!ban) return;
+  const ds = STATE?.distill || {};
+  if (!ds.busy) {
+    ban.hidden = true;
+    ban.innerHTML = "";
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, ds.pct || 0));
+  const cat = ds.category || "分类";
+  const label = ds.label || "蒸馏中…";
+  ban.hidden = false;
+  ban.innerHTML = `
+    <div class="job-banner-inner">
+      <div class="job-banner-text">
+        <b>正在蒸馏「${esc(cat)}」</b>
+        <span class="muted small">${esc(label)} · ${pct}%${ds.eta ? ` · 约剩 ${fmtEta(ds.eta)}` : ""}</span>
+      </div>
+      <div class="bar job-bar"><i style="width:${pct}%"></i></div>
+      <a class="btn sm" href="#/distill">查看</a>
+    </div>`;
+}
+
 async function refreshState() {
   try { STATE = await api("/api/state"); } catch { return; }
   const st = STATE.stats, w = STATE.worker;
   const queued = ACTIVE.reduce((n, k) => n + (st.by_status[k] || 0), 0);
   const q = $("#navQueue"); q.hidden = !queued; q.textContent = queued;
   const sf = $("#sideStatus");
-  const pg = STATE.progress || {}, dp = STATE.deep || {};
+  const pg = STATE.progress || {}, dp = STATE.deep || {}, ds = STATE.distill || {};
   const parts = [];
   if (w.busy) parts.push(pg.item_id ? `${pg.stage_label} ${pg.pct}% · ${fmtEta(pg.eta)}` : (w.stage || "处理中…"));
   if (dp.item_id) parts.push(`精读 ${dp.pct || 0}% · ${fmtEta(dp.eta)}`);
+  if (ds.busy) parts.push(`蒸馏 ${ds.pct || 0}% · ${ds.category || ""}`);
   sf.className = "side-foot" + (parts.length ? " busy" : "");
   sf.textContent = parts.join("\n") || `就绪 · v${STATE.version || ""}`;
   $("#navCats").innerHTML = (st.categories || []).map((c) =>
     `<a href="#/library/cat/${encodeURIComponent(c.category || "其他")}" class="${libFilter.category === c.category ? "on" : ""}">
       <i class="dot cat-${catColor(c.category)}"></i>${esc(c.category || "其他")}<span>${c.n}</span></a>`).join("");
+  updateJobBanner();
+  updateDistillProgressLive();
   return STATE;
 }
 
@@ -101,6 +129,7 @@ function startPolling() {
   clearTimeout(pollTimer);
   const tick = async () => {
     const before = JSON.stringify(STATE?.stats);
+    const distillWas = !!(STATE?.distill?.busy);
     await refreshState();
     const r = route();
     if (r.name === "process") renderProcessLive();
@@ -115,19 +144,53 @@ function startPolling() {
       }
       wasDeepBusy = busy;
     }
-    const active = STATE?.worker?.busy || STATE?.deep?.item_id;
-    pollTimer = setTimeout(tick, active ? 1000 : 2500);
+    const ds = STATE?.distill || {};
+    if (distillWas && !ds.busy && ds.just_done) {
+      if (ds.error) toast("蒸馏失败：" + ds.error, 6000);
+      else toast(`蒸馏完成：${ds.title || ds.category || ""}`);
+      try { await api("/api/distill/ack", {}); } catch {}
+      if (r.name === "distill") renderDistill();
+      else await refreshState();
+    }
+    wasDistillBusy = !!ds.busy;
+    const active = STATE?.worker?.busy || STATE?.deep?.item_id || ds.busy;
+    pollTimer = setTimeout(tick, active ? 800 : 2500);
   };
   pollTimer = setTimeout(tick, 1000);
 }
 
+function updateDistillProgressLive() {
+  const box = $("#distProg");
+  if (!box) return;
+  const ds = STATE?.distill || {};
+  const pct = Math.max(0, Math.min(100, ds.pct || 0));
+  if (ds.busy) {
+    box.hidden = false;
+    box.innerHTML = `
+      <div class="row" style="margin-bottom:6px">
+        <b>蒸馏进行中</b><span class="spacer"></span>
+        <span class="muted small">${pct}%${ds.eta ? ` · 约剩 ${fmtEta(ds.eta)}` : ""}</span>
+      </div>
+      <div class="bar big-bar"><i style="width:${pct}%"></i></div>
+      <div class="muted small" style="margin-top:6px">${esc(ds.label || "处理中…")} · 「${esc(ds.category || "")}」</div>`;
+    const btn = $("#distRun");
+    if (btn) { btn.disabled = true; btn.textContent = "蒸馏中…"; }
+  } else if (!box.dataset.keep) {
+    box.hidden = true;
+    box.innerHTML = "";
+  }
+}
+
 /* ---------------------------------------------------------------- 路由 */
 function route() {
-  const h = decodeURIComponent(location.hash.slice(1) || "/library");
+  const h = decodeURIComponent(location.hash.slice(1) || "/overview");
   const p = h.split("/").filter(Boolean);
   if (p[0] === "item") return { name: "item", id: +p[1], tab: p[2] };
-  if (p[0] === "process") return { name: "process" };
+  if (p[0] === "process") return { name: "process", tab: p[1] || "" };
   if (p[0] === "settings") return { name: "settings" };
+  if (p[0] === "cards") return { name: "cards", category: p[1] ? p.slice(1).join("/") : "" };
+  if (p[0] === "distill") return { name: "distill" };
+  if (p[0] === "overview") return { name: "overview" };
   return { name: "library", category: p[1] === "cat" ? p.slice(2).join("/") : "" };
 }
 
@@ -135,9 +198,15 @@ async function render() {
   const r = route();
   $$(".nav > a").forEach((a) => a.classList.toggle("on", a.dataset.nav === (r.name === "item" ? "library" : r.name)));
   if (!STATE) await refreshState();
+  if (r.name === "overview") return renderOverview();
   if (r.name === "library") { libFilter.category = r.category; await refreshState(); return renderLibrary(); }
   if (r.name === "item") return renderItem(r.id, r.tab);
-  if (r.name === "process") return renderProcess();
+  if (r.name === "process") {
+    if (r.tab && TABS.some((t) => t[0] === r.tab)) procTab = r.tab;
+    return renderProcess();
+  }
+  if (r.name === "cards") return renderCards(r.category);
+  if (r.name === "distill") return renderDistill();
   if (r.name === "settings") return renderSettings();
 }
 window.addEventListener("hashchange", () => {
@@ -146,12 +215,273 @@ window.addEventListener("hashchange", () => {
   render();
 });
 
-/* ---------------------------------------------------------------- 学习库 */
+/* ---------------------------------------------------------------- 总览 / 知识卡片 / 蒸馏问答（对齐抖音知识库侧栏能力） */
 function bannerHtml() {
   const s = STATE.settings;
   if (!s.api_key_set) return `<div class="banner info"><div><b>还没配置 AI。</b> 没有它只能把视频转成文字，生成不了学习笔记。
     用「免费方案」两分钟就能配好，不花钱。</div><span class="spacer"></span><a class="btn sm primary" href="#/settings">去配置 →</a></div>`;
   return "";
+}
+
+function humanizeFailReason(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return { short: "原因未记录", tip: "可看下方运行日志" };
+  const rules = [
+    { re: /403|Blocked|download|play_url|地址/i, short: "视频下载失败（地址过期或被拦）", tip: "点「只登录抖音」重新扫码后再重试" },
+    { re: /must contain complete audio|没有声音|NoSpeech|无对白|纯音乐/i, short: "缺音频/无对白", tip: "可跳过；有字幕的视频会优先用字幕" },
+    { re: /字幕|subtitle/i, short: "字幕读取异常", tip: "可重试，或改用本机听写" },
+    { re: /429|rate|频繁|额度/i, short: "请求限流或额度不足", tip: "隔一会儿再试，或检查 AI Key 额度" },
+    { re: /401|API Key|无效/i, short: "AI Key 无效", tip: "到设置里检查 Key" },
+    { re: /whisper|转文字|transcrib|BITS|模型/i, short: "听写/模型异常", tip: "检查网络后重试；也可先出文案笔记" },
+    { re: /timeout|超时|连不上|网络/i, short: "网络超时", tip: "检查网络后重试" },
+    { re: /reset-stuck|卡死复位/i, short: "曾卡死已复位", tip: "可勾选后重新处理" },
+    { re: /LLM|提炼|JSON|接口/i, short: "AI 提炼失败", tip: "检查设置里的接口地址和模型名" },
+  ];
+  for (const r of rules) {
+    if (r.re.test(t)) return { short: r.short, tip: r.tip, raw: t };
+  }
+  const clipped = t.length > 100 ? t.slice(0, 100) + "…" : t;
+  return { short: clipped, tip: "对照原始报错排查", raw: t };
+}
+
+function renderOverview() {
+  const st = STATE.stats || {};
+  const bs = st.by_status || {};
+  const done = bs.done || 0;
+  const queued = ACTIVE.reduce((n, k) => n + (bs[k] || 0), 0);
+  const failed = bs.failed || 0;
+  const skipped = (bs.skipped || 0) + (bs.irrelevant || 0);
+  const cardsN = (STATE.cards || []).filter((c) => c.has_card).length;
+  const skillsN = (STATE.skills || []).length;
+  const stuck = ACTIVE.filter((k) => k !== "queued").reduce((n, k) => n + (bs[k] || 0), 0);
+  view.innerHTML = `
+    ${bannerHtml()}
+    <div class="head"><div><h1>总览</h1><div class="muted">处理与学习概况</div></div>
+      <a class="btn primary" href="#/process">${ico("plus")}去处理</a></div>
+    <div class="stat-grid">
+      <a class="stat-card blue" href="#/library"><div class="stat-num">${done}</div><div class="stat-label">已完成笔记</div><div class="stat-note">点进学习库</div></a>
+      <a class="stat-card green" href="#/process"><div class="stat-num">${queued}</div><div class="stat-label">处理中/排队</div><div class="stat-note">点进添加与处理</div></a>
+      <a class="stat-card amber" href="#/process/failed"><div class="stat-num">${failed}</div><div class="stat-label">失败待重试</div><div class="stat-note">点看失败原因</div></a>
+      <a class="stat-card slate" href="#/process/skipped"><div class="stat-num">${skipped}</div><div class="stat-label">已跳过</div><div class="stat-note">广告/无关等</div></a>
+      <a class="stat-card purple" href="#/cards"><div class="stat-num">${cardsN}</div><div class="stat-label">知识卡片</div><div class="stat-note">按分类汇总</div></a>
+      <a class="stat-card teal" href="#/distill"><div class="stat-num">${skillsN}</div><div class="stat-label">已蒸馏技能</div><div class="stat-note">蒸馏与问答</div></a>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <div class="panel-title">快捷入口</div>
+      <div class="row" style="gap:10px;margin-top:10px">
+        <a class="btn" href="#/cards">生成/查看知识卡片</a>
+        <a class="btn" href="#/distill">知识蒸馏与 AI 问答</a>
+        <a class="btn ghost" href="#/library">学习库</a>
+        ${stuck ? `<button class="btn" id="ovResetStuck">一键复位（${stuck} 条卡住）</button>` : ""}
+      </div>
+      <p class="muted small" style="margin-top:12px">建议：勾选有用的再处理 → 出笔记 → 分类够 3 条生成知识卡片 → 蒸馏后问答。</p>
+    </div>`;
+  const btn = $("#ovResetStuck");
+  if (btn) btn.onclick = async () => {
+    if (!confirm("把卡住的处理退回排队，并停止当前任务？")) return;
+    try {
+      const r = await api("/api/reset-stuck", {});
+      toast(`已复位 ${r.requeued || 0} 条`);
+      await refreshState();
+      renderOverview();
+    } catch (e) { toast(e.message, 4000); }
+  };
+}
+
+async function renderCards(focusCat = "") {
+  await refreshState();
+  const list = STATE.cards || [];
+  if (focusCat) {
+    try {
+      const card = await api("/api/cards/" + encodeURIComponent(focusCat));
+      return renderCardDetail(card);
+    } catch (e) {
+      toast(String(e.message || e));
+    }
+  }
+  view.innerHTML = `
+    ${bannerHtml()}
+    <div class="head"><div><h1>知识卡片</h1>
+      <div class="muted">按分类把多条笔记收成「四格」卡片（讲了什么 / 钩子 / 能抄 / 跟进）</div></div>
+      <button class="btn" id="cardsReload">刷新</button></div>
+    <div class="kcard-grid" id="kcardGrid">
+      ${list.length ? list.map((c) => `
+        <div class="kcard ${c.has_card ? "ready" : ""}">
+          <div class="kcard-top"><b>${esc(c.category)}</b><span class="chip">${c.count} 条笔记</span></div>
+          <div class="muted small">${c.has_card ? esc(c.thesis || "已生成") : (c.ready ? "可以生成知识卡片" : `还差 ${Math.max(0, (c.min_notes || 3) - c.count)} 条`)}</div>
+          <div class="row" style="margin-top:12px">
+            ${c.has_card ? `<a class="btn sm primary" href="#/cards/${encodeURIComponent(c.category)}">查看</a>` : ""}
+            <button class="btn sm ${c.has_card ? "ghost" : "primary"}" data-gen="${esc(c.category)}" ${c.ready ? "" : "disabled"}>${c.has_card ? "重新生成" : "生成卡片"}</button>
+          </div>
+        </div>`).join("") : `<div class="empty">还没有分类笔记。先去处理收藏，出几条笔记再回来。</div>`}
+    </div>`;
+  $("#cardsReload").onclick = () => renderCards();
+  $$("[data-gen]").forEach((btn) => {
+    btn.onclick = async () => {
+      const cat = btn.dataset.gen;
+      btn.disabled = true; btn.textContent = "生成中…";
+      try {
+        await api("/api/cards/generate", { category: cat });
+        toast("知识卡片已生成");
+        location.hash = "#/cards/" + encodeURIComponent(cat);
+      } catch (e) {
+        toast(String(e.message || e), 5000);
+        btn.disabled = false; btn.textContent = "生成卡片";
+      }
+    };
+  });
+}
+
+function renderCardDetail(card) {
+  const li = (arr) => (arr && arr.length ? arr.map((x) => `<li>${esc(x)}</li>`).join("") : "<li class='muted'>（暂无）</li>");
+  view.innerHTML = `
+    <a class="back" href="#/cards">← 返回知识卡片</a>
+    <div class="head"><div><h1>${esc(card.category)}</h1>
+      <div class="muted">${esc(card.thesis || "")} · ${card.note_count || 0} 条 · ${esc(card.updated_at || "")}</div></div>
+      <button class="btn" id="cardRegen">重新生成</button>
+      <button class="btn ghost" id="cardDel">删除</button></div>
+    <div class="quad-grid">
+      <div class="card quad"><h3>01 讲了什么</h3><ul>${li(card.what)}</ul></div>
+      <div class="card quad"><h3>02 钩子</h3><ul>${li(card.hooks)}</ul></div>
+      <div class="card quad"><h3>03 能抄什么</h3><ul>${li(card.actions)}</ul></div>
+      <div class="card quad"><h3>04 要不要跟进</h3><ul>${li(card.followup)}</ul></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h3>来源笔记</h3><ul>${li(card.sources)}</ul>
+      <div class="row" style="margin-top:12px">
+        <a class="btn sm" href="#/library/cat/${encodeURIComponent(card.category)}">打开该分类学习库</a>
+        <a class="btn sm primary" href="#/distill">去蒸馏 / 问答</a>
+      </div></div>`;
+  $("#cardRegen").onclick = async () => {
+    try {
+      await api("/api/cards/generate", { category: card.category });
+      toast("已重新生成");
+      renderCards(card.category);
+    } catch (e) { toast(String(e.message || e), 5000); }
+  };
+  $("#cardDel").onclick = async () => {
+    if (!confirm(`删除「${card.category}」知识卡片？`)) return;
+    await api("/api/cards/delete", { category: card.category });
+    toast("已删除");
+    location.hash = "#/cards";
+  };
+}
+
+let distillChat = [];
+let distillLastCat = "";
+async function renderDistill() {
+  await refreshState();
+  const cats = STATE.stats.categories || [];
+  const skills = STATE.skills || [];
+  const skillMap = Object.fromEntries(skills.map((s) => [s.category, s]));
+  const ds0 = STATE.distill || {};
+  const prefer = distillLastCat || ds0.category || "";
+  view.innerHTML = `
+    ${bannerHtml()}
+    <div class="head"><div><h1>知识蒸馏与 AI 问答</h1>
+      <div class="muted">选一个分类：多篇笔记 → 蒸馏成技能稿 → 基于技能（或笔记）提问</div></div></div>
+    <div class="distill-layout">
+      <div class="card">
+        <div class="panel-title">① 选择分类并蒸馏</div>
+        <div class="field" style="margin-top:10px"><label>分类</label>
+          <select id="distCat"><option value="">选择分类…</option>
+            ${cats.map((c) => `<option value="${esc(c.category)}" ${c.category === prefer ? "selected" : ""}>${esc(c.category)}（${c.n}）</option>`).join("")}
+          </select></div>
+        <div class="muted small" id="distMeta" style="margin:8px 0 12px">选好分类后可蒸馏；已蒸馏的可直接问答。</div>
+        <div class="row">
+          <button class="btn primary" id="distRun" disabled>开始蒸馏</button>
+          <button class="btn ghost" id="distOpenCard" disabled>查看知识卡片</button>
+        </div>
+        <div class="distill-prog" id="distProg" hidden></div>
+        <pre class="distill-preview" id="distPreview" hidden></pre>
+      </div>
+      <div class="card">
+        <div class="panel-title">② AI 问答</div>
+        <div class="chat-box" id="distChat">
+          <div class="chat-msg bot">先选左侧分类。有蒸馏技能就按技能答；没有就按该分类笔记摘要答。</div>
+        </div>
+        <div class="chat-input-row">
+          <input id="distQ" type="text" placeholder="例如：这个分类里最该先实践的 3 步是什么？" />
+          <button class="btn primary" id="distAsk" disabled>发送</button>
+        </div>
+      </div>
+    </div>`;
+
+  const syncMeta = () => {
+    const cat = $("#distCat").value;
+    distillLastCat = cat;
+    const sk = skillMap[cat];
+    const busy = !!(STATE?.distill?.busy);
+    $("#distRun").disabled = !cat || busy;
+    $("#distRun").textContent = busy ? "蒸馏中…" : "开始蒸馏";
+    $("#distOpenCard").disabled = !cat;
+    $("#distAsk").disabled = !cat;
+    $("#distMeta").textContent = !cat ? "选好分类后可蒸馏；已蒸馏的可直接问答。"
+      : (sk ? `已有技能「${sk.title}」（${sk.updated_at}，基于 ${sk.note_count} 条）` : "还没蒸馏过，可先蒸馏，或直接问答（会用笔记摘要）");
+    if (sk) {
+      api("/api/skills/" + encodeURIComponent(cat)).then((d) => {
+        $("#distPreview").hidden = false;
+        $("#distPreview").textContent = (d.body || "").slice(0, 2500);
+      }).catch(() => { $("#distPreview").hidden = true; });
+    } else {
+      $("#distPreview").hidden = true;
+    }
+    updateDistillProgressLive();
+  };
+  $("#distCat").onchange = () => { distillChat = []; syncMeta(); $("#distChat").innerHTML = `<div class="chat-msg bot">已选「${esc($("#distCat").value)}」，可以提问了。</div>`; };
+  $("#distOpenCard").onclick = () => { location.hash = "#/cards/" + encodeURIComponent($("#distCat").value); };
+  $("#distRun").onclick = async () => {
+    const cat = $("#distCat").value;
+    if (!cat) return;
+    distillLastCat = cat;
+    $("#distRun").disabled = true; $("#distRun").textContent = "蒸馏中…";
+    const box = $("#distProg");
+    if (box) {
+      box.hidden = false;
+      box.innerHTML = `<div class="row" style="margin-bottom:6px"><b>蒸馏进行中</b><span class="spacer"></span><span class="muted small">启动中…</span></div>
+        <div class="bar big-bar"><i style="width:5%"></i></div>
+        <div class="muted small" style="margin-top:6px">已提交后台，可切到其他页面，进度不会丢</div>`;
+    }
+    try {
+      await api("/api/distill/run", { category: cat });
+      toast("已开始蒸馏，可切页，顶部会显示进度");
+      await refreshState();
+      syncMeta();
+    } catch (e) {
+      toast(String(e.message || e), 5000);
+      $("#distRun").textContent = "开始蒸馏";
+      $("#distRun").disabled = !$("#distCat").value;
+      if (box) { box.hidden = true; box.innerHTML = ""; }
+    }
+  };
+  const sendAsk = async () => {
+    const cat = $("#distCat").value;
+    const q = $("#distQ").value.trim();
+    if (!cat || !q) return;
+    distillChat.push({ role: "user", content: q });
+    $("#distChat").insertAdjacentHTML("beforeend", `<div class="chat-msg me">${esc(q)}</div>`);
+    $("#distQ").value = "";
+    $("#distAsk").disabled = true;
+    const thinking = document.createElement("div");
+    thinking.className = "chat-msg bot"; thinking.textContent = "思考中…";
+    $("#distChat").appendChild(thinking);
+    try {
+      const r = await api("/api/distill/ask", { category: cat, question: q, history: distillChat.slice(0, -1) });
+      thinking.textContent = r.answer || "（无回答）";
+      distillChat.push({ role: "assistant", content: r.answer || "" });
+    } catch (e) {
+      thinking.textContent = "失败：" + (e.message || e);
+      distillChat.pop();
+    } finally {
+      $("#distAsk").disabled = !$("#distCat").value;
+      $("#distChat").scrollTop = $("#distChat").scrollHeight;
+    }
+  };
+  $("#distAsk").onclick = sendAsk;
+  $("#distQ").onkeydown = (e) => { if (e.key === "Enter") sendAsk(); };
+  syncMeta();
+  if (prefer) {
+    $("#distChat").innerHTML = `<div class="chat-msg bot">已选「${esc(prefer)}」，可以提问了。</div>`;
+  }
 }
 
 async function renderLibrary(soft = false) {
@@ -668,9 +998,11 @@ async function renderProcessLive() {
   if (!$("#statusCard")) return;
   const w = STATE.worker, st = STATE.stats.by_status;
   const pg = STATE.progress || {};
+  const stuckN = ["fetching", "downloading", "transcribing", "extracting"].reduce((n, k) => n + (st[k] || 0), 0);
   $("#statusCard").innerHTML = w.busy
     ? (pg.item_id ? `<div class="pcard">
-        <div class="row"><div class="spinner"></div><b class="ptitle">${esc(pg.title || "处理中")}</b><span class="spacer"></span><button class="btn sm" id="stopBtn">停止</button></div>
+        <div class="row"><div class="spinner"></div><b class="ptitle">${esc(pg.title || "处理中")}</b><span class="spacer"></span>
+          <button class="btn sm ghost" id="resetBtn">一键复位</button><button class="btn sm" id="stopBtn">停止</button></div>
         <div class="stepper">${["fetching", "downloading", "transcribing", "extracting"].map((k) => {
             const lbl = (pg.is_note ? { fetching: "读取图文", downloading: "下载图片", transcribing: "识别图片文字", extracting: "AI 提炼" }
               : { fetching: "读取信息", downloading: "下载", transcribing: "转文字", extracting: "AI 提炼" })[k];
@@ -683,11 +1015,12 @@ async function renderProcessLive() {
       </div>`
       : `<div class="spinner"></div><div style="flex:1"><b>${esc(w.stage || "处理中…")}</b>
         <div class="muted small">${w.total ? `本批进度 ${w.done} / ${w.total}` : ""}</div></div>
-        <button class="btn" id="stopBtn">停止</button>`)
+        <button class="btn ghost" id="resetBtn">一键复位</button><button class="btn" id="stopBtn">停止</button>`)
     : `<div class="idle-ic">${ico("coffee")}</div><div style="flex:1"><b>空闲中</b><div class="muted small">
-        ${(st.queued || 0) ? `队列里还有 ${st.queued} 条等待处理` : "添加视频后会自动开始处理"}</div></div>
+        ${(st.queued || 0) ? `队列里还有 ${st.queued} 条等待处理；也可勾选后再处理` : "添加视频后会自动开始处理"}</div></div>
+        ${stuckN ? `<button class="btn" id="resetBtn">一键复位（卡死 ${stuckN}）</button>` : ""}
         ${(st.failed || 0) ? `<button class="btn" id="retryFailed">${ico("retry")}重试失败的 ${st.failed} 条</button>` : ""}
-        ${(st.queued || 0) ? `<button class="btn primary" id="goBtn">开始处理</button>` : ""}`;
+        ${(st.queued || 0) ? `<button class="btn primary" id="goBtn">开始处理队列</button>` : ""}`;
   $("#retryFailed") && ($("#retryFailed").onclick = async () => {
     const failed = await api("/api/items?status=failed");
     for (const it of failed) await api(`/api/items/${it.id}/action`, { action: "retry" });
@@ -695,15 +1028,28 @@ async function renderProcessLive() {
   });
   $("#stopBtn") && ($("#stopBtn").onclick = () => api("/api/stop", {}));
   $("#goBtn") && ($("#goBtn").onclick = async () => { await api("/api/process", {}); refreshState().then(renderProcessLive); });
+  $("#resetBtn") && ($("#resetBtn").onclick = async () => {
+    if (!confirm("停止当前任务，并把卡住的条目退回排队？")) return;
+    try {
+      const r = await api("/api/reset-stuck", {});
+      toast(`已复位，退回 ${r.requeued || 0} 条`);
+      await refreshState(); renderProcessLive();
+    } catch (e) { toast(e.message || String(e), 4000); }
+  });
 
   $("#tabs").innerHTML = TABS.map(([k, label, ss]) => {
     const n = ss.reduce((a, s) => a + (st[s] || 0), 0);
     return `<button data-k="${k}" class="${procTab === k ? "on" : ""}">${label} ${n ? `(${n})` : ""}</button>`;
   }).join("");
-  $$("#tabs button").forEach((b) => b.onclick = () => { procTab = b.dataset.k; renderProcessLive(); });
+  $$("#tabs button").forEach((b) => b.onclick = () => {
+    procTab = b.dataset.k;
+    history.replaceState(null, "", "#/process/" + procTab);
+    renderProcessLive();
+  });
 
   const ss = TABS.find((t) => t[0] === procTab)[2];
   const items = await api("/api/items?status=" + ss.join(","));
+  const canPick = ["queued", "failed", "need_key"].includes(procTab) || procTab === "active";
   $("#qlist").innerHTML = items.length ? items.slice(0, 300).map((it) => {
     const [label, cls] = STATUS[it.status] || [it.status, "gray"];
     let btns = "";
@@ -711,9 +1057,21 @@ async function renderProcessLive() {
     if (it.status === "need_key") btns = `<button class="btn sm" data-a="reextract" data-id="${it.id}">提炼</button>`;
     if (it.status === "irrelevant") btns = `<button class="btn sm" data-a="include" data-id="${it.id}">收进学习库</button>`;
     if (["failed", "skipped", "irrelevant", "need_key", "queued"].includes(it.status)) btns += ` <button class="btn sm ghost" data-a="delete" data-id="${it.id}">删除</button>`;
-    return `<div class="qrow"><div style="min-width:0">
+    const pickable = ["queued", "failed", "need_key", ...ACTIVE.filter((x) => x !== "queued")].includes(it.status);
+    const check = (canPick && pickable)
+      ? `<input type="checkbox" class="qcheck" value="${it.id}" />`
+      : `<span class="muted">—</span>`;
+    let reasonHtml = "";
+    if (it.status === "failed" || (it.reason && String(it.reason).startsWith("reset-stuck"))) {
+      const h = humanizeFailReason(it.reason);
+      reasonHtml = `<div class="fail-line" title="${esc((h.tip ? h.tip + "｜" : "") + (h.raw || h.short))}"><span class="chip bad">${esc(h.short)}</span> <span class="muted small">${esc(h.tip)}</span></div>`;
+    } else if (it.reason) {
+      reasonHtml = `<div class="r muted small">${esc(it.reason)}</div>`;
+    }
+    return `<div class="qrow"><div class="qcheck-cell">${check}</div><div style="min-width:0;flex:1">
         <div class="t"><a href="#/item/${it.id}" style="color:inherit">${esc(it.note_title || it.title || it.url || "（解析中）")}</a></div>
-        <div class="r"><span class="chip ${cls}">${label}</span> ${esc(it.reason || "")}</div></div>
+        <div class="r"><span class="chip ${cls}">${label}</span></div>
+        ${reasonHtml}</div>
         <div class="row">${btns}</div></div>`;
   }).join("") : `<div class="empty" style="padding:30px">这里是空的</div>`;
   $$("#qlist [data-a]").forEach((b) => b.onclick = async () => {
@@ -722,12 +1080,48 @@ async function renderProcessLive() {
     await api(`/api/items/${b.dataset.id}/action`, { action: a });
     await refreshState(); renderProcessLive();
   });
+  if (canPick && items.some((it) => ["queued", "failed", "need_key", "fetching", "downloading", "transcribing", "extracting"].includes(it.status))) {
+    $("#qlist").insertAdjacentHTML("afterbegin", `<div class="row sel-bar" style="padding:8px 4px">
+      <label class="muted small"><input type="checkbox" id="qCheckAll" /> 全选可处理</label>
+      <span class="spacer"></span>
+      <span class="muted small" id="qSelHint">勾选有用的再处理</span>
+      <button class="btn sm primary" id="processSel" disabled>处理选中</button>
+    </div>`);
+    const refreshSel = () => {
+      const n = $$("#qlist .qcheck:checked").length;
+      $("#processSel").disabled = n === 0 || !!w.busy;
+      $("#qSelHint").textContent = n ? `已选 ${n} 条` : "勾选有用的再处理";
+      const all = $$("#qlist .qcheck");
+      const ca = $("#qCheckAll");
+      if (ca) {
+        ca.checked = all.length > 0 && all.every((el) => el.checked);
+        ca.indeterminate = all.some((el) => el.checked) && !ca.checked;
+      }
+    };
+    $("#qCheckAll").onchange = () => {
+      const on = $("#qCheckAll").checked;
+      $$("#qlist .qcheck").forEach((el) => { el.checked = on; });
+      refreshSel();
+    };
+    $$("#qlist .qcheck").forEach((el) => el.addEventListener("change", refreshSel));
+    $("#processSel").onclick = async () => {
+      const ids = $$("#qlist .qcheck:checked").map((el) => +el.value);
+      if (!ids.length) return;
+      if (!confirm(`确定只处理选中的 ${ids.length} 条？`)) return;
+      try {
+        await api("/api/process", { ids });
+        toast(`开始处理选中的 ${ids.length} 条`);
+        await refreshState(); renderProcessLive();
+      } catch (e) { toast(e.message || String(e), 4000); }
+    };
+    refreshSel();
+  }
   if (procTab === "need_key" && items.length > 1 && STATE.settings.api_key_set) {
     $("#qlist").insertAdjacentHTML("afterbegin", `<div class="row" style="padding:8px 4px"><span class="muted small">AI Key 已填好，可以一次全部提炼</span><span class="spacer"></span><button class="btn sm primary" id="allRe">全部提炼</button></div>`);
     $("#allRe").onclick = async () => { for (const it of items) await api(`/api/items/${it.id}/action`, { action: "reextract" }); toast("已全部加入队列"); };
   }
   if (procTab === "failed" && items.length >= 1) {
-    $("#qlist").insertAdjacentHTML("afterbegin", `<div class="row" style="padding:8px 4px"><span class="spacer"></span><button class="btn sm" id="allRetry">全部重试</button></div>`);
+    $("#qlist").insertAdjacentHTML("afterbegin", `<div class="row" style="padding:8px 4px"><span class="muted small">失败原因见每条下方说明</span><span class="spacer"></span><button class="btn sm" id="allRetry">全部重试</button></div>`);
     $("#allRetry").onclick = async () => { for (const it of items) await api(`/api/items/${it.id}/action`, { action: "retry" }); toast("已全部重新排队，开始处理"); await refreshState(); renderProcessLive(); };
   }
   const logs = $("#logs");
@@ -810,7 +1204,7 @@ async function renderSettings() {
     </div>
     <div class="card form" style="margin-bottom:16px" id="backupCard">
       <h2>备份与恢复</h2>
-      <p class="muted" style="margin:-6px 0 0">把全部数据（笔记、文字稿、精读、学习进度、设置）打包成一个文件。换电脑时，在新电脑上装好学习台，导入这个文件就恢复原样。
+      <p class="muted" style="margin:-6px 0 0">把全部数据（笔记、文字稿、精读、学习进度、设置）打包成一个文件。换电脑时，在新电脑上装好 AI知识库，导入这个文件就恢复原样。
         抖音登录状态和语音模型不打包：换电脑后重新扫码、模型会自动重新下载。</p>
       <div class="row" style="gap:12px">
         <a class="btn primary" id="bkDown" href="/api/backup?keys=1">${ico("download")}下载完整备份</a>
@@ -916,7 +1310,7 @@ async function renderSettings() {
 /* ---------------------------------------------------------------- 启动 */
 (async () => {
   await refreshState();
-  if (!location.hash) location.hash = STATE.settings.api_key_set || STATE.stats.total ? "#/library" : "#/settings";
+  if (!location.hash) location.hash = STATE.settings.api_key_set || STATE.stats.total ? "#/overview" : "#/settings";
   render();
   startPolling();
 })();

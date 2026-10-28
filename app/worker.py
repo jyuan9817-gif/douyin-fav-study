@@ -49,7 +49,11 @@ class Worker:
             self.state.update(busy=True, task=cmd, stage="", item_id=None)
             try:
                 if cmd == "process":
-                    self._process_all()
+                    ids = kw.get("ids") or []
+                    if ids:
+                        self._process_ids(ids)
+                    else:
+                        self._process_all()
                 elif cmd == "login":
                     self._browser().ensure_login(should_stop=self.stopping)
                 elif cmd == "sync":
@@ -132,6 +136,56 @@ class Worker:
             self._process_one(it)
             self.state["done"] += 1
         self.log("这一批处理完了。" if not self.stopping() else "已停止。")
+
+    def _process_ids(self, ids):
+        """只处理用户勾选的条目（先排进队列再逐条跑）。"""
+        ready, seen = [], set()
+        for raw in ids:
+            try:
+                i = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if i in seen:
+                continue
+            seen.add(i)
+            it = db.get(i)
+            if not it or it["status"] in ("done", "skipped", "irrelevant"):
+                continue
+            db.update(i, status="queued", attempts=0, reason=None)
+            ready.append(i)
+        if not ready:
+            self.log("勾选的条目里没有可处理的。")
+            return
+        self.retry_later = []
+        self.state.update(done=0, total=len(ready))
+        self.log(f"开始处理勾选的 {len(ready)} 条。")
+        for i in ready:
+            if self.stopping():
+                break
+            it = db.get(i)
+            if not it or it["status"] != "queued":
+                continue
+            self.state.update(item_id=it["id"])
+            self._process_one(it)
+            self.state["done"] += 1
+        self.log("勾选批次处理完了。" if not self.stopping() else "已停止。")
+
+    def reset_stuck(self):
+        """卡死复位：停止当前任务，把卡在中间态的条目退回排队。"""
+        self.stop()
+        n = 0
+        with db._write_lock:
+            cur = db.conn().execute(
+                f"UPDATE items SET status='queued', reason=?, updated_at=? "
+                f"WHERE status IN ({','.join('?' * len(db.ACTIVE))})",
+                ["reset-stuck:卡死复位退回排队", time.time(), *db.ACTIVE],
+            )
+            n = cur.rowcount or 0
+            db.conn().commit()
+        self.prog.reset()
+        self.state.update(busy=False, task="", stage="", item_id=None, done=0, total=0)
+        self.log(f"已复位：{n} 条中间态退回排队（请稍等当前步骤结束后再点开始处理）。")
+        return {"ok": True, "requeued": n}
 
     def _stage(self, it, status, msg):
         db.update(it["id"], status=status, reason=None)

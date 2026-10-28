@@ -12,7 +12,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import __version__, backup, config, db, deep, douyin, llm, notes, ocr, transcribe
+from . import __version__, backup, cards, config, db, deep, distill, douyin, llm, notes, ocr, transcribe
 from .worker import Worker, scan_inbox
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -146,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
         d = deep_runner.snapshot()
         if d.get("item_id") or d.get("pending"):
             return "正在精读，请等精读完成后再恢复备份"
+        if distill.runner.snapshot().get("busy"):
+            return "正在知识蒸馏，请等蒸馏完成后再恢复备份"
         return None
 
     def _local_only(self):
@@ -197,7 +199,26 @@ class Handler(BaseHTTPRequestHandler):
                 "progress": worker.prog.snapshot(
                     max(0, db.stats()["by_status"].get("queued", 0))),
                 "deep": deep_runner.snapshot(),
+                "distill": distill.runner.snapshot(),
+                "cards": cards.list_cards(),
+                "skills": distill.list_skills(),
             })
+        if path == "/api/cards":
+            return self._json({"items": cards.list_cards(), "min_notes": cards.MIN_NOTES})
+        if path.startswith("/api/cards/"):
+            cat = urllib.parse.unquote(path.split("/", 3)[-1])
+            data = cards.get_card(cat)
+            if not data:
+                return self._err("还没有这张知识卡片，先点生成", 404)
+            return self._json(data)
+        if path == "/api/skills":
+            return self._json({"items": distill.list_skills()})
+        if path.startswith("/api/skills/"):
+            cat = urllib.parse.unquote(path.split("/", 3)[-1])
+            data = distill.get_skill(cat)
+            if not data:
+                return self._err("还没有蒸馏这份技能，先点蒸馏", 404)
+            return self._json(data)
         if path == "/api/backup":
             try:
                 f, m = backup.create(include_keys=q("keys", "1") == "1")
@@ -280,11 +301,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"found": len(links), "added": added})
 
         if path == "/api/process":
-            worker.submit("process")
-            return self._json({"ok": True})
+            ids = b.get("ids") if isinstance(b.get("ids"), list) else []
+            ids = [int(x) for x in ids if str(x).isdigit() or isinstance(x, int)]
+            if ids:
+                worker.submit("process", ids=ids)
+            else:
+                worker.submit("process")
+            return self._json({"ok": True, "count": len(ids) if ids else None})
         if path == "/api/stop":
             worker.stop()
             return self._json({"ok": True})
+        if path == "/api/reset-stuck":
+            try:
+                return self._json(worker.reset_stuck())
+            except Exception as e:
+                return self._err(f"复位失败：{e}", 500)
         if path == "/api/login":
             worker.submit("login")
             return self._json({"ok": True})
@@ -315,6 +346,49 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             except Exception as e:
                 return self._err(f"打不开：{e}")
+
+        if path == "/api/cards/generate":
+            cat = str(b.get("category") or "").strip()
+            if not cat:
+                return self._err("请选择分类")
+            try:
+                return self._json(cards.generate(cat, config.load()))
+            except ValueError as e:
+                return self._err(str(e))
+            except llm.LLMError as e:
+                return self._err(str(e))
+            except Exception as e:
+                return self._err(f"生成失败：{e}", 500)
+        if path == "/api/cards/delete":
+            cat = str(b.get("category") or "").strip()
+            if not cat:
+                return self._err("请选择分类")
+            cards.delete_card(cat)
+            return self._json({"ok": True})
+        if path == "/api/distill/run":
+            cat = str(b.get("category") or "").strip()
+            if not cat:
+                return self._err("请选择分类")
+            try:
+                return self._json(distill.runner.start(cat))
+            except ValueError as e:
+                return self._err(str(e))
+            except Exception as e:
+                return self._err(f"蒸馏失败：{e}", 500)
+        if path == "/api/distill/ack":
+            distill.runner.ack_done()
+            return self._json({"ok": True})
+        if path == "/api/distill/ask":
+            cat = str(b.get("category") or "").strip()
+            qtext = str(b.get("question") or "").strip()
+            try:
+                return self._json(distill.ask(cat, qtext, config.load(), history=b.get("history") or []))
+            except ValueError as e:
+                return self._err(str(e))
+            except llm.LLMError as e:
+                return self._err(str(e))
+            except Exception as e:
+                return self._err(f"问答失败：{e}", 500)
 
         if path == "/api/settings":
             patch = {k: v for k, v in b.items() if k in config.DEFAULTS and k != "tokens_used"}
@@ -522,7 +596,7 @@ def serve(port=8765, open_browser=True):
         raise SystemExit("找不到可用端口")
     url = f"http://127.0.0.1:{port}/"
     print("=" * 56)
-    print(f"  收藏学习台 v{__version__} 已启动")
+    print(f"  AI知识库 v{__version__} 已启动")
     print(f"  在浏览器打开：{url}")
     print("  关闭这个窗口即可退出程序")
     print("=" * 56, flush=True)
