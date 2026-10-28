@@ -20,6 +20,13 @@ Turn your saved Douyin videos &amp; image posts into local study notes you can l
 
 > Everything runs locally on your own machine: your own Douyin login, your own AI key of choice (Claude, DeepSeek, Kimi, Qwen, GLM, SiliconFlow, OpenAI, Gemini or any OpenAI-compatible API, including free tiers). Notes are plain Markdown files. The UI is in Chinese.
 
+## 讲解视频 · Video
+
+https://github.com/user-attachments/assets/00f61aff-8f26-4cbc-a444-ab62e3a569c5
+
+上面是约 50 秒的短版。约 3 分钟的完整版（安装、启动、配置 API、使用）：[下载 douyin-fav-study-intro-full.mp4](https://github.com/yuanshengbo8-sketch/douyin-fav-study/releases/download/v1.0.1/douyin-fav-study-intro-full.mp4)
+The full 3-minute walkthrough is attached to the [v1.0.1 release](https://github.com/yuanshengbo8-sketch/douyin-fav-study/releases/tag/v1.0.1).
+
 ![学习库](docs/screenshots/library.png)
 
 ## 功能一览 · Features
