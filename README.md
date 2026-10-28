@@ -6,7 +6,7 @@
 Turn your saved Douyin videos &amp; image posts into local study notes you can learn, quiz and review.</p>
 
 <p align="center">
-<img alt="version" src="https://img.shields.io/badge/version-1.0.1-0071e3">
+<img alt="version" src="https://img.shields.io/badge/version-1.0.2-0071e3">
 <img alt="platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555">
 <img alt="python" src="https://img.shields.io/badge/python-3.11%20%7C%203.12-3776ab">
 <img alt="license" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-orange">
@@ -55,7 +55,7 @@ The full 3-minute walkthrough is attached to the [v1.0.1 release](https://github
 
 ## 快速开始 · Quick start
 
-1. 安装 Python 3.11 或 3.12（Windows 安装时勾选「Add python.exe to PATH」）
+1. 安装 **Python 3.12**（不要装 3.13 及以上，部分组件还不支持；Windows 安装时勾选「Add python.exe to PATH」）
 2. 下载本仓库（右上角 **Code → Download ZIP**，或到 [Releases](../../releases) 下载），解压
 3. 双击 `install_windows.bat` 或 `install_mac.command` 安装（只需一次）
 4. 双击 `start_windows.bat` 或 `start_mac.command`，浏览器会打开 `http://127.0.0.1:8765`
@@ -69,7 +69,9 @@ The full 3-minute walkthrough is attached to the [v1.0.1 release](https://github
 
 ### 1. 先装 Python
 
-到 https://www.python.org/downloads/ 下载 **Python 3.11 或 3.12**。
+到 https://www.python.org/downloads/ 下载 **Python 3.12**（3.11 也可以）。
+
+> ⚠️ 官网首页默认推荐的是最新版（3.13 或更高），**不要用它**：语音识别等组件还没有支持新版本，会装不上。在下载页往下翻到「Looking for a specific release?」，选 3.12.x。已经装了新版本也没关系，不用卸载，再装一个 3.12 就行，安装脚本会自动选 3.12。
 
 - **Windows**：安装时一定要勾选下方的 **「Add python.exe to PATH」**
 - **Mac**：下载 macOS 安装包，一路下一步即可

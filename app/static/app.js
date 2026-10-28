@@ -147,7 +147,18 @@ window.addEventListener("hashchange", () => {
 });
 
 /* ---------------------------------------------------------------- 学习库 */
+function depsBanner() {
+  const d = STATE.deps; if (!d) return "";
+  const miss = [];
+  if (!d.playwright) miss.push("读取抖音的组件（playwright）：粘贴链接和同步收藏夹都用不了");
+  if (!d.asr) miss.push("语音转文字的组件：没有字幕的视频转不了文字");
+  if (!miss.length) return "";
+  return `<div class="banner warn"><div><b>安装没有完成，缺少：</b><br>${miss.map(esc).join("<br>")}
+    <div class="small" style="margin-top:6px">${d.python_ok ? "" : `你用的是 Python ${esc(d.python)}，太新了，部分组件还不支持。请先安装 Python 3.12，`}关掉这个程序，删掉程序文件夹里的 .venv 文件夹，再重新运行安装脚本，看到「安装完成」后再启动。</div></div></div>`;
+}
+
 function bannerHtml() {
+  const dep = depsBanner(); if (dep) return dep;
   const s = STATE.settings;
   if (!s.api_key_set) return `<div class="banner info"><div><b>还没配置 AI。</b> 没有它只能把视频转成文字，生成不了学习笔记。
     用「免费方案」两分钟就能配好，不花钱。</div><span class="spacer"></span><a class="btn sm primary" href="#/settings">去配置 →</a></div>`;

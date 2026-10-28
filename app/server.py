@@ -15,6 +15,24 @@ from pathlib import Path
 from . import __version__, backup, config, db, deep, douyin, llm, notes, ocr, transcribe
 from .worker import Worker, scan_inbox
 
+_DEPS = None
+
+
+def deps_status():
+    """检查关键组件有没有装上（结果缓存，装好后重启程序即可刷新）。"""
+    global _DEPS
+    if _DEPS is None:
+        import importlib.util as u
+        import sys
+        has = lambda m: u.find_spec(m) is not None
+        _DEPS = {
+            "python": platform.python_version(),
+            "python_ok": (3, 10) <= sys.version_info[:2] <= (3, 12),
+            "playwright": has("playwright"),
+            "asr": has("faster_whisper") or has("mlx_whisper"),
+        }
+    return _DEPS
+
 STATIC = Path(__file__).resolve().parent / "static"
 worker: Worker = None
 deep_runner: deep.DeepRunner = None
@@ -193,7 +211,7 @@ class Handler(BaseHTTPRequestHandler):
                 "settings": config.public(s), "providers": config.PROVIDERS, "free_plans": config.FREE_PLANS,
                 "library_dir": str(config.library_dir()), "inbox_dir": str(config.INBOX_DIR),
                 "asr": transcribe.engine_status(),
-                "ocr": ocr.status(), "version": __version__,
+                "ocr": ocr.status(), "version": __version__, "deps": deps_status(),
                 "progress": worker.prog.snapshot(
                     max(0, db.stats()["by_status"].get("queued", 0))),
                 "deep": deep_runner.snapshot(),

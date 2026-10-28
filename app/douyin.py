@@ -198,7 +198,7 @@ class Browser:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            raise DouyinError("缺少 playwright 组件，请重新运行安装脚本")
+            raise DouyinError("缺少 playwright 组件：安装没有完成。请关掉程序，重新运行安装脚本（推荐 Python 3.12），看到「安装完成」再启动")
         self.pw = sync_playwright().start()
         errors = []
         for ch in self._channels():
